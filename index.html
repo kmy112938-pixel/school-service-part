@@ -149,6 +149,9 @@ td.done,td.task-next,.home-task .next,.hint{white-space:pre-wrap}
 .tools .field{max-width:100%}
 .overlay{position:fixed;inset:0;background:rgba(10,15,25,.4);display:flex;align-items:center;justify-content:center;padding:16px;z-index:10}
 .modal{background:var(--surface);border-radius:12px;padding:20px;width:min(380px,100%)}
+.modal-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.modal-close{border:0;background:none;width:32px;height:32px;margin:-6px -8px -6px 0;border-radius:8px;font-size:22px;line-height:1;color:var(--ink-2)}
+.modal-close:hover{background:var(--surface-2)}
 .names{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--navy);color:#fff;padding:9px 16px;border-radius:8px;font-size:15px;z-index:20;max-width:calc(100% - 32px)}
 .toast.err{background:var(--bad)}
@@ -168,6 +171,10 @@ td.done,td.task-next,.home-task .next,.hint{white-space:pre-wrap}
 .home-request-caption{margin:0 0 8px}
 .home-task-meta .bad{color:var(--bad);font-weight:700}
 .home-task-meta .warn{color:var(--warn);font-weight:700}
+.home-history.done-requests{margin-top:12px}
+.done-request{padding:10px 0;border-top:1px solid var(--line);overflow-wrap:anywhere}
+.done-request .body{margin:4px 0;white-space:pre-wrap}
+.done-request .answer{font-weight:600;white-space:pre-wrap}
 .home-history{margin:0;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 14px}
 .home-history summary{margin:0;cursor:pointer;color:var(--ink-2);font-weight:600;padding:6px 0}
 .home-history .table-wrap{margin:6px 0}
@@ -326,10 +333,20 @@ document.addEventListener('visibilitychange',function(){
 // 이름 고르기
 function pickName(){
   var o=$('#overlay');o.hidden=false;o.className='overlay';
-  o.innerHTML='<div class="modal"><h2>내 이름을 골라 주세요</h2><div class="names">'+
+  var canClose=!!me&&D.names.indexOf(me)>=0; // 이름을 아직 안 고른 첫 화면에서는 닫지 않음
+  o.innerHTML='<div class="modal" role="dialog" aria-modal="true" aria-label="이름 고르기"><div class="modal-top"><h2>내 이름을 골라 주세요</h2>'+
+    (canClose?'<button class="modal-close" type="button" data-close aria-label="닫기">×</button>':'')+'</div><div class="names">'+
     D.names.map(function(n){return '<button class="btn" type="button" data-n="'+esc(n)+'">'+esc(n)+'</button>'}).join('')+'</div></div>';
-  o.onclick=function(e){var b=e.target.closest('[data-n]');if(!b)return;me=b.dataset.n;store('sb-part-me',me);o.hidden=true;o.innerHTML='';render()};
+  o.onclick=function(e){
+    if(e.target.closest('[data-close]'))return closePopup();
+    var b=e.target.closest('[data-n]');if(!b)return;me=b.dataset.n;store('sb-part-me',me);o.hidden=true;o.innerHTML='';render()};
 }
+function closePopup(){
+  var o=$('#overlay');
+  if(o.hidden||!o.querySelector('[data-close]'))return;
+  o.hidden=true;o.innerHTML='';$('#meBtn').focus();
+}
+document.addEventListener('keydown',function(e){if(e.key==='Escape'&&!e.isComposing)closePopup()});
 
 function setView(v){
   view=['home','team','plans'].includes(v)?v:'home';
@@ -444,6 +461,9 @@ function renderHome(){
     var due=isDate(x.due)?x.due:'',dc=!due?'':due<=t?'bad':due<=addDays(t,3)?'warn':'';
     return {t:x,due:due,dc:dc,next:latestNext(x.name)};
   }).sort(function(a,b){return (a.due||'9999').localeCompare(b.due||'9999')});
+  var doneRequests=D.records.filter(function(r){return r.to&&String(r.req||'').trim()&&r.reqStatus==='완료'})
+    .sort(function(a,b){return b.date.localeCompare(a.date)||b.row-a.row});
+  var doneDetails=$('#doneRequests'),doneOpen=doneDetails&&doneDetails.open;
   var news=newsAll?D.news:D.news.slice(0,3);
   var h='<div class="home-actions"><button class="btn primary" type="button" id="quickRecord">+ 진행 내용 기록</button><button class="btn" type="button" id="quickRequest">확인 요청 보내기</button></div><div id="homeComposer"></div>';
   h+='<div class="home-grid"><div class="home-column">';
@@ -486,6 +506,11 @@ function renderHome(){
         '<div class="meta">'+esc(md(r.date))+' · '+esc(fromOf(r))+' → '+esc(r.to)+'</div><div class="body">'+esc(r.req)+'</div>'+
         (r.reply?'<div class="small-quiet">현재 답변: '+esc(r.reply)+'</div>':'')+'</div>';
     }).join('')+'</div></div>';
+  if(doneRequests.length)h+='<details class="home-history done-requests" id="doneRequests"'+(doneOpen?' open':'')+'><summary>처리 완료 ('+doneRequests.length+'건)</summary>'+
+    doneRequests.map(function(r){
+      return '<div class="done-request"><b>'+esc(r.task)+'</b><div class="meta">'+esc(md(r.date))+' · '+esc(fromOf(r))+' → '+esc(r.to)+'</div>'+
+        '<div class="body">'+esc(r.req)+'</div>'+(r.reply?'<div class="answer">답변 · '+esc(r.reply)+'</div>':'')+'</div>';
+    }).join('')+'</details>';
   h+='</section>';
   h+='<section class="home-section"><div class="sec-h"><h2>파트 소식</h2><button class="btn small" type="button" id="newsAdd">+ 소식 올리기</button></div><div id="newsForm"></div>';
   h+=news.length?'<div class="list">'+news.map(function(n){
