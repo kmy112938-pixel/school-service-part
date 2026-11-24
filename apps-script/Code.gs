@@ -3,7 +3,15 @@
 
 const TZ = 'Asia/Seoul';
 const SH = { tasks: '업무리스트', records: '업무기록', requests: '확인요청', news: '파트 소식', plans: '개선과제', lists: '목록', trash: '삭제한 업무' };
-const COLS = { tasks: 9, records: 9, requests: 11, news: 5, plans: 6, trash: 11 };
+const COLS = { tasks: 9, records: 9, requests: 11, news: 5, plans: 6, trash: 11, lists: 3 };
+const D_ = 'yyyy-mm-dd';
+const FORMATS = {
+  tasks: ['0', '0', '@', '@', '@', '@', D_, '@', '@'],
+  records: ['0', '0', '@', D_, '@', '@', '@', '@', '@'],
+  requests: ['0', '0', '@', D_, '@', '@', '@', '@', '@', '@', '@'],
+  news: [D_, '@', '@', '@', '@'],
+  trash: ['0', '0', '@', '@', '@', '@', D_, '@', '@', '@', '@']
+};
 const STATUSES = ['진행중', '대기', '보류', '완료'];
 
 function doGet() {
@@ -13,6 +21,7 @@ function doGet() {
 function doPost(e) {
   const api = { getData: getData, addTask: addTask, editTask: editTask, deleteTask: deleteTask, addRecord: addRecord, updateRequest: updateRequest, addNews: addNews };
   let out;
+  ROWS_ = {};
   try {
     const body = JSON.parse(e.postData.contents);
     if (!Object.prototype.hasOwnProperty.call(api, body.fn)) {
@@ -58,35 +67,59 @@ function date_(s) {
   return d;
 }
 
+// 탭은 요청 한 번에 한 번만 읽고, 쓴 내용은 ROWS_에도 반영해 다시 읽지 않는다
+let ROWS_ = {};
 // 2행부터 내용이 있는 행을 { r: 시트 행 번호, v: 값 }으로 읽는다
 function rows_(kind) {
-  const sh = sheet_(SH[kind]);
-  const last = sh.getLastRow();
-  if (last < 2) return [];
-  return sh.getRange(2, 1, last - 1, COLS[kind]).getValues()
-    .map(function (v, i) { return { r: i + 2, v: v }; })
-    .filter(function (x) { return x.v.some(function (c) { return str_(c) !== ''; }); });
+  if (ROWS_[kind]) return ROWS_[kind];
+  const n = COLS[kind];
+  return (ROWS_[kind] = sheet_(SH[kind]).getDataRange().getValues().slice(1)
+    .map(function (v, i) {
+      const row = v.slice(0, n);
+      while (row.length < n) row.push('');
+      return { r: i + 2, v: row };
+    })
+    .filter(function (x) { return x.v.some(function (c) { return str_(c) !== ''; }); }));
 }
 function nextId_(rows) {
   return rows.reduce(function (m, x) { return Math.max(m, Number(x.v[0]) || 0); }, 0) + 1;
 }
 // 글자 칸은 텍스트 서식으로 두어 '11.4' 같은 글이 숫자나 날짜로 바뀌지 않게 한다
-function write_(kind, row, values, textCols, dateCols) {
+function write_(kind, row, values) {
   const sh = sheet_(SH[kind]);
   if (row > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), 100);
-  textCols.forEach(function (c) { sh.getRange(row, c).setNumberFormat('@'); });
-  dateCols.forEach(function (c) { sh.getRange(row, c).setNumberFormat('yyyy-mm-dd'); });
-  sh.getRange(row, 1, 1, values.length).setValues([values]);
+  sh.getRange(row, 1, 1, values.length).setNumberFormats([FORMATS[kind]]).setValues([values]);
 }
-function append_(kind, values, textCols, dateCols) {
+function append_(kind, values) {
   const rows = rows_(kind);
-  write_(kind, rows.length ? rows[rows.length - 1].r + 1 : 2, values, textCols, dateCols);
+  const row = rows.length ? rows[rows.length - 1].r + 1 : 2;
+  write_(kind, row, values);
+  rows.push({ r: row, v: values });
 }
-function column_(a1) {
-  return sheet_(SH.lists).getRange(a1).getValues().map(function (r) { return str_(r[0]); }).filter(String);
+function update_(kind, row, values) {
+  write_(kind, row, values);
+  rows_(kind).forEach(function (x) { if (x.r === row) x.v = values; });
 }
-function names_() { return column_('C2:C'); }
-function cats_() { return column_('B2:B'); }
+// 바뀐 우선순위만 쓴다
+function writePriorities_(tasks) {
+  const sh = sheet_(SH.tasks), byRow = {};
+  tasks.forEach(function (t) { byRow[t.r] = t.priority; });
+  const changed = rows_('tasks').filter(function (x) { return byRow[x.r] && Number(x.v[1]) !== byRow[x.r]; });
+  if (!changed.length) return;
+  changed.forEach(function (x) { x.v[1] = byRow[x.r]; });
+  // 이어진 행은 묶어서 한 번에 쓴다
+  for (let i = 0; i < changed.length;) {
+    let j = i;
+    while (j + 1 < changed.length && changed[j + 1].r === changed[j].r + 1) j++;
+    sh.getRange(changed[i].r, 2, j - i + 1, 1).setValues(changed.slice(i, j + 1).map(function (x) { return [x.v[1]]; }));
+    i = j + 1;
+  }
+}
+function column_(index) {
+  return rows_('lists').map(function (x) { return str_(x.v[index]); }).filter(String);
+}
+function names_() { return column_(2); }
+function cats_() { return column_(1); }
 
 function readTasks_() {
   return rows_('tasks').filter(function (x) { return str_(x.v[2]); }).map(function (x) {
@@ -122,6 +155,7 @@ function getData() {
 function withLock_(fn) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) throw new Error('다른 사람이 저장하고 있어요. 잠시 뒤 다시 눌러 주세요.');
+  ROWS_ = {}; // 잠금 전에 읽은 값은 쓰지 않는다
   try {
     const out = fn();
     SpreadsheetApp.flush();
@@ -175,8 +209,6 @@ function saveTask_(p, editing) {
 
     const completed = p.status === '완료';
     const newlyCompleted = completed && (!existing || existing.status !== '완료');
-    const old = {};
-    tasks.forEach(function (t) { old[t.no] = t.priority; });
     const peers = tasks.filter(function (t) { return t !== existing && (t.status === '완료') === completed; }).sort(byRank_);
     const oldName = existing ? existing.name : '';
     const task = existing || { no: String(nextTaskId_()), r: 0 };
@@ -199,12 +231,13 @@ function saveTask_(p, editing) {
     }).forEach(function (t, i) { t.priority = i + 1; });
 
     const values = [id_(task.no), task.priority, task.name, task.cat, task.owner, task.status, task.due ? date_(task.due) : '', task.issue, task.link];
-    if (existing) write_('tasks', task.r, values, [3, 8, 9], [7]);
-    else append_('tasks', values, [3, 8, 9], [7]);
-    const sh = sheet_(SH.tasks);
-    tasks.forEach(function (t) {
-      if (t !== task && t.priority !== old[t.no]) sh.getRange(t.r, 2).setValue(t.priority);
-    });
+    if (existing) {
+      update_('tasks', task.r, values);
+    } else {
+      append_('tasks', values);
+      task.r = rows_('tasks')[rows_('tasks').length - 1].r;
+    }
+    writePriorities_(tasks);
     if (existing && oldName !== name) renameTask_(task.no, oldName, name);
     if (hasRecord) putRecord_(task, rec.date, author, rec.done, rec.next);
     return getData();
@@ -240,15 +273,17 @@ function deleteTask(id, base, me) {
       created.setFrozenRows(1);
     }
     append_('trash', [id_(task.no), task.priority, task.name, task.cat, task.owner, task.status, task.due ? date_(task.due) : '',
-      text_(task.issue), text_(task.link), now_(), by], [3, 8, 9, 10, 11], [7]);
+      text_(task.issue), text_(task.link), now_(), by]);
     SpreadsheetApp.flush();
     sh.deleteRow(task.r);
+    ROWS_.tasks = rows_('tasks').filter(function (x) { return x.r !== task.r; });
+    ROWS_.tasks.forEach(function (x) { if (x.r > task.r) x.r--; });
 
-    readTasks_().sort(function (a, b) {
+    const rest = readTasks_().sort(function (a, b) {
       return (a.status === '완료' ? 1 : 0) - (b.status === '완료' ? 1 : 0) || byRank_(a, b);
-    }).forEach(function (t, i) {
-      if (t.priority !== i + 1) sh.getRange(t.r, 2).setValue(i + 1);
     });
+    rest.forEach(function (t, i) { t.priority = i + 1; });
+    writePriorities_(rest);
     return getData();
   });
 }
@@ -258,8 +293,9 @@ function renameTask_(no, oldName, name) {
     rows_(kind).forEach(function (x) {
       const taskId = str_(x.v[1]);
       if (taskId === no || (!taskId && str_(x.v[2]) === oldName)) {
-        sh.getRange(x.r, 2).setValue(id_(no));
-        sh.getRange(x.r, 3).setNumberFormat('@').setValue(name);
+        x.v[1] = id_(no);
+        x.v[2] = name;
+        sh.getRange(x.r, 2, 1, 2).setNumberFormats([['0', '@']]).setValues([[x.v[1], name]]);
       }
     });
   });
@@ -267,8 +303,7 @@ function renameTask_(no, oldName, name) {
 
 /* 기록·요청 */
 function putRecord_(task, date, author, done, next) {
-  append_('records', [nextId_(rows_('records')), id_(task.no), task.name, date_(date), author, text_(done), text_(next), now_(), ''],
-    [3, 5, 6, 7, 8, 9], [4]);
+  append_('records', [nextId_(rows_('records')), id_(task.no), task.name, date_(date), author, text_(done), text_(next), now_(), '']);
 }
 function addRecord(p) {
   p = p || {};
@@ -286,8 +321,7 @@ function addRecord(p) {
     }
     if (done || next) putRecord_(task, p.date, me, done, next);
     if (req) {
-      append_('requests', [nextId_(rows_('requests')), id_(task.no), task.name, date_(p.date), me, to, req, '확인 전', '', '', ''],
-        [3, 5, 6, 7, 8, 9, 10, 11], [4]);
+      append_('requests', [nextId_(rows_('requests')), id_(task.no), task.name, date_(p.date), me, to, req, '확인 전', '', '', '']);
     }
     return getData();
   });
@@ -299,8 +333,10 @@ function updateRequest(id, status, reply) {
     if (!found || str_(found.v[7]) === '완료') throw new Error('이미 처리했거나 찾을 수 없는 요청이에요. 새로고침해 주세요.');
     const answer = text_(reply);
     const replied = answer !== str_(found.v[8]) ? now_() : str_(found.v[9]);
-    sheet_(SH.requests).getRange(found.r, 8, 1, 4).setNumberFormat('@')
-      .setValues([[status, answer, replied, status === '완료' ? now_() : '']]);
+    const row = found.v.slice();
+    row[7] = status; row[8] = answer; row[9] = replied; row[10] = status === '완료' ? now_() : '';
+    found.v = row;
+    sheet_(SH.requests).getRange(found.r, 8, 1, 4).setNumberFormats([['@', '@', '@', '@']]).setValues([row.slice(7, 11)]);
     return getData();
   });
 }
@@ -312,7 +348,7 @@ function addNews(p) {
   if (!title) throw new Error('소식 제목을 적어 주세요.');
   if (link && !/^https?:\/\//i.test(link)) throw new Error('문서 링크를 확인해 주세요.');
   return withLock_(function () {
-    append_('news', [date_(today_()), title, text_(p.summary), link, member_(p.by)], [2, 3, 4, 5], [1]);
+    append_('news', [date_(today_()), title, text_(p.summary), link, member_(p.by)]);
     return getData();
   });
 }

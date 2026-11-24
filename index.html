@@ -6,6 +6,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <title>스쿨서비스 파트</title>
+<link rel="preconnect" href="https://script.google.com" crossorigin>
+<link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
 <style>
 :root{
   --bg:#F3F5F8;--surface:#fff;--surface-2:#ECF0F4;--line:#D9E0E7;
@@ -259,7 +261,8 @@ function recsInWeek(name,ws,records){var we=addDays(ws,6);return (records||D.rec
 // 시트 저장
 var API_URL='https://script.google.com/macros/s/AKfycbzZD516j0LlTC5l7I9rmKpM0g0sL3E947upq_S3yXLEJdE8XwL0shWPwSvWqgPW_6re/exec';
 var LEGACY_UNTIL='2026-11-19'; // 이전 시트에서 옮긴 초기 기록(작성자·등록 일시 없음)
-var loadedAt=0,busy=false;
+var CACHE_KEY='sb-part-cache';
+var loadedAt=0,busy=false,saveSeq=0; // saveSeq: 저장보다 먼저 시작된 조회 결과가 저장 내용을 덮지 않게 한다
 function todayLocal(){var p=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());var v={};p.forEach(function(x){v[x.type]=x.value});return v.year+'-'+v.month+'-'+v.day}
 function api(fn,args){
  return fetch(API_URL,{method:'POST',body:JSON.stringify({fn:fn,args:args||[]}),redirect:'follow'})
@@ -277,6 +280,18 @@ function setData(data){
   if(r.legacy)r.next='';
  });
  D=data;loadedAt=Date.now();
+ store(CACHE_KEY,JSON.stringify(data));
+}
+function editing(){return busy||!!document.querySelector('.inline-editor,.req-edit:not([hidden])')}
+// 지난번에 본 내용을 먼저 보여준다
+function showCached(){
+ try{
+  var data=JSON.parse(store(CACHE_KEY)||'null');
+  if(!data||![data.names,data.cats,data.tasks,data.records,data.news].every(Array.isArray))return;
+  setData(data);D.today=todayLocal();loadedAt=0;
+  if(!me||D.names.indexOf(me)<0)pickName();
+  render();
+ }catch(e){D=null}
 }
 function call(fn,args,btn,okMsg){
  if(busy)return;
@@ -305,7 +320,7 @@ function call(fn,args,btn,okMsg){
    };
   }
  }catch(e){toast(e.message,true);return}
- busy=true;
+ busy=true;saveSeq++;
  var label=btn?btn.textContent:'';
  if(btn){btn.disabled=true;btn.textContent=fn==='deleteTask'?'삭제 중…':'저장 중…'}
  api(fn,args).then(function(data){
@@ -314,25 +329,28 @@ function call(fn,args,btn,okMsg){
   toast(e.message||'처리하지 못했어요.',true);
  }).then(function(){busy=false;if(btn){btn.disabled=false;btn.textContent=label}});
 }
-function load(){
- api('getData').then(function(data){
+function refresh(){
+ var seq=saveSeq;
+ return api('getData').then(function(data){
+  if(busy||seq!==saveSeq)return;
   setData(data);
-  if(!me||D.names.indexOf(me)<0)pickName();
-  render();
- }).catch(function(e){
-  if(D)return;
+  if(!me||D.names.indexOf(me)<0){if($('#overlay').hidden)pickName();render()}
+  else if(!editing())render();
+ });
+}
+function load(){
+ if(!D)showCached();
+ refresh().catch(function(e){
+  if(D){toast('최신 내용을 불러오지 못했어요. 새로고침해 주세요.',true);return}
   $('#main').innerHTML='<div class="empty">'+esc(e.message)+'<br><button class="btn" type="button" id="retry" style="margin-top:10px">다시 불러오기</button></div>';
   $('#retry').onclick=function(){$('#main').innerHTML='<div class="loading">불러오는 중…</div>';load()};
  });
 }
 // 다른 사람이 저장한 내용: 화면으로 돌아오면 다시 불러온다 (작성 중이면 그대로 둔다)
 document.addEventListener('visibilitychange',function(){
- if(document.hidden||!D||busy||Date.now()-loadedAt<30000)return;
- if(!$('#overlay').hidden||document.querySelector('.inline-editor,.req-edit:not([hidden])'))return;
- api('getData').then(function(data){
-  if(busy||document.querySelector('.inline-editor,.req-edit:not([hidden])'))return;
-  setData(data);render();
- }).catch(function(){});
+ if(document.hidden||!D||Date.now()-loadedAt<30000)return;
+ if(!$('#overlay').hidden||editing())return;
+ refresh().catch(function(){});
 });
 
 // 이름 고르기
