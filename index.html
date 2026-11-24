@@ -249,13 +249,13 @@ var API_URL='https://script.google.com/macros/s/AKfycbzZD516j0LlTC5l7I9rmKpM0g0s
 var LEGACY_UNTIL='2026-11-19'; // 이전 시트에서 옮긴 초기 기록(작성자·등록 일시 없음)
 var loadedAt=0,busy=false;
 function todayLocal(){var p=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());var v={};p.forEach(function(x){v[x.type]=x.value});return v.year+'-'+v.month+'-'+v.day}
-function api(fn,args,key){
- return fetch(API_URL,{method:'POST',body:JSON.stringify({key:key||store('sb-part-key'),fn:fn,args:args||[]}),redirect:'follow'})
+function api(fn,args){
+ return fetch(API_URL,{method:'POST',body:JSON.stringify({fn:fn,args:args||[]}),redirect:'follow'})
   .catch(function(){throw Error('연결하지 못했어요. 인터넷을 확인해 주세요.')})
   .then(function(r){return r.text()})
   .then(function(text){
    var res;try{res=JSON.parse(text)}catch(e){throw Error('저장 서버가 응답하지 않아요.')}
-   if(!res.ok){var err=Error(res.error||'처리하지 못했어요.');err.code=res.code;throw err}
+   if(!res.ok)throw Error(res.error||'처리하지 못했어요.');
    return res.data;
   });
 }
@@ -299,18 +299,15 @@ function call(fn,args,btn,okMsg){
  api(fn,args).then(function(data){
   setData(data);if(done)done();render();if(okText)toast(okText);
  }).catch(function(e){
-  if(e.code==='KEY')return askKey(e.message);
   toast(e.message||'처리하지 못했어요.',true);
  }).then(function(){busy=false;if(btn){btn.disabled=false;btn.textContent=label}});
 }
 function load(){
- if(!store('sb-part-key'))return askKey();
  api('getData').then(function(data){
   setData(data);
   if(!me||D.names.indexOf(me)<0)pickName();
   render();
  }).catch(function(e){
-  if(e.code==='KEY')return askKey(e.message);
   if(D)return;
   $('#main').innerHTML='<div class="empty">'+esc(e.message)+'<br><button class="btn" type="button" id="retry" style="margin-top:10px">다시 불러오기</button></div>';
   $('#retry').onclick=function(){$('#main').innerHTML='<div class="loading">불러오는 중…</div>';load()};
@@ -325,24 +322,6 @@ document.addEventListener('visibilitychange',function(){
   setData(data);render();
  }).catch(function(){});
 });
-function askKey(msg){
- var o=$('#overlay');o.hidden=false;o.className='overlay';o.onclick=null;
- o.innerHTML='<form class="modal"><h2>팀 암호</h2><input class="field" id="keyInput" type="password" autocomplete="current-password" aria-label="팀 암호">'+
-  '<div class="meta bad" id="keyErr" role="alert" style="color:var(--bad);min-height:1.5em;margin-top:6px"></div>'+
-  '<div class="editor-actions"><button class="btn primary" type="submit">들어가기</button></div></form>';
- $('#keyErr').textContent=msg||'';$('#keyInput').focus();
- o.querySelector('form').onsubmit=function(e){
-  e.preventDefault();
-  var key=$('#keyInput').value.trim(),b=o.querySelector('[type=submit]');if(!key)return;
-  b.disabled=true;b.textContent='확인 중…';
-  api('getData',[],key).then(function(data){
-   store('sb-part-key',key);
-   var first=!D;setData(data);o.hidden=true;o.innerHTML='';
-   if(!me||D.names.indexOf(me)<0)pickName();
-   if(first||!document.querySelector('.inline-editor'))render();
-  }).catch(function(e){$('#keyErr').textContent=e.message;b.disabled=false;b.textContent='들어가기'});
- };
-}
 
 // 이름 고르기
 function pickName(){

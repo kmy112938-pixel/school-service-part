@@ -1,5 +1,5 @@
 // 스쿨서비스 파트 — 시트 저장 서버
-// 스크립트 속성: SHEET_ID(시트 ID), TEAM_KEY(팀 암호, 10자 이상)
+// 스크립트 속성: SHEET_ID(시트 ID)
 
 const TZ = 'Asia/Seoul';
 const SH = { tasks: '업무리스트', records: '업무기록', requests: '확인요청', news: '파트 소식', plans: '개선과제', lists: '목록' };
@@ -15,10 +15,7 @@ function doPost(e) {
   let out;
   try {
     const body = JSON.parse(e.postData.contents);
-    if (!keyOk_(body.key)) {
-      Utilities.sleep(1500);
-      out = { ok: false, code: 'KEY', error: '팀 암호가 맞지 않아요.' };
-    } else if (!Object.prototype.hasOwnProperty.call(api, body.fn)) {
+    if (!Object.prototype.hasOwnProperty.call(api, body.fn)) {
       out = { ok: false, error: '지원하지 않는 작업이에요.' };
     } else {
       out = { ok: true, data: api[body.fn].apply(null, Array.isArray(body.args) ? body.args : []) };
@@ -30,10 +27,6 @@ function doPost(e) {
 }
 
 function prop_(name) { return PropertiesService.getScriptProperties().getProperty(name) || ''; }
-function keyOk_(key) {
-  const saved = prop_('TEAM_KEY');
-  return saved.length >= 10 && typeof key === 'string' && key === saved;
-}
 
 let SS_ = null;
 function ss_() { return SS_ || (SS_ = SpreadsheetApp.openById(prop_('SHEET_ID'))); }
