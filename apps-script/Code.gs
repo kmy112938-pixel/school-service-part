@@ -1,5 +1,6 @@
 // 스쿨서비스 파트 — 시트 저장 서버
 // 스크립트 속성: SHEET_ID(시트 ID)
+// 서비스: Google Sheets API(Sheets) — 없으면 탭을 하나씩 읽어 느려진다
 
 const TZ = 'Asia/Seoul';
 const SH = { tasks: '업무리스트', records: '업무기록', requests: '확인요청', news: '파트 소식', plans: '개선과제', lists: '목록', trash: '삭제한 업무' };
@@ -68,9 +69,10 @@ function date_(s) {
 }
 
 // 탭은 요청 한 번에 한 번만 읽고, 쓴 내용은 ROWS_에도 반영해 다시 읽지 않는다
-let ROWS_ = {};
+let ROWS_ = {}, NO_BATCH_ = false;
 // 2행부터 내용이 있는 행을 { r: 시트 행 번호, v: 값 }으로 읽는다
 function rows_(kind) {
+  if (!ROWS_[kind] && kind !== 'trash') loadAll_();
   if (ROWS_[kind]) return ROWS_[kind];
   const n = COLS[kind];
   return (ROWS_[kind] = sheet_(SH[kind]).getDataRange().getValues().slice(1)
@@ -80,6 +82,33 @@ function rows_(kind) {
       return { r: i + 2, v: row };
     })
     .filter(function (x) { return x.v.some(function (c) { return str_(c) !== ''; }); }));
+}
+// 탭 여러 개를 한 번에 읽는다 (탭마다 따로 읽으면 하나에 0.4초쯤 걸린다)
+function loadAll_() {
+  if (NO_BATCH_ || typeof Sheets === 'undefined') return;
+  const kinds = ['tasks', 'records', 'requests', 'news', 'plans', 'lists'].filter(function (k) { return !ROWS_[k]; });
+  let ranges;
+  try {
+    ranges = Sheets.Spreadsheets.Values.batchGet(prop_('SHEET_ID'), {
+      ranges: kinds.map(function (k) { return "'" + SH[k] + "'!A2:" + String.fromCharCode(64 + COLS[k]); }),
+      valueRenderOption: 'UNFORMATTED_VALUE',
+      dateTimeRenderOption: 'SERIAL_NUMBER'
+    }).valueRanges;
+  } catch (err) {
+    NO_BATCH_ = true;
+    console.warn('한 번에 읽기 실패: ' + err.message);
+    return;
+  }
+  kinds.forEach(function (k, i) {
+    const formats = FORMATS[k] || [];
+    ROWS_[k] = (ranges[i].values || []).map(function (v, j) {
+      const row = v.map(function (c, n) {
+        return formats[n] === D_ && typeof c === 'number' ? new Date(Date.UTC(1899, 11, 30) + Math.floor(c) * 864e5).toISOString().slice(0, 10) : c;
+      });
+      while (row.length < COLS[k]) row.push('');
+      return { r: j + 2, v: row };
+    }).filter(function (x) { return x.v.some(function (c) { return str_(c) !== ''; }); });
+  });
 }
 function nextId_(rows) {
   return rows.reduce(function (m, x) { return Math.max(m, Number(x.v[0]) || 0); }, 0) + 1;
