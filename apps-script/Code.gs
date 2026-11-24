@@ -36,7 +36,7 @@ function sheet_(name) {
   return sh;
 }
 function str_(v) {
-  if (v instanceof Date) return Utilities.formatDate(v, TZ, 'yyyy-MM-dd');
+  if (Object.prototype.toString.call(v) === '[object Date]') return Utilities.formatDate(v, TZ, 'yyyy-MM-dd');
   return v === null || v === undefined ? '' : String(v).trim();
 }
 // '='로 시작하는 글이 수식이 되지 않게 한다
