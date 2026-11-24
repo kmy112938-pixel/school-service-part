@@ -242,6 +242,11 @@ function isDate(s){if(!/^\d{4}-\d{2}-\d{2}$/.test(s||''))return false;var p=s.sp
 function ownersOf(t){return String(t.owner||'').split(/[,·\/]/).map(function(x){return x.trim()}).filter(Boolean)}
 function taskOf(name){for(var i=0;i<D.tasks.length;i++)if(D.tasks[i].name===name)return D.tasks[i];return null}
 function fromOf(r){if(r.from)return r.from;var t=taskOf(r.task);return t?ownersOf(t)[0]||'':''}
+function openRequestsOf(task){
+  return D.records.filter(function(r){
+    return String(r.req||'').trim()&&r.reqStatus!=='완료'&&(String(r.taskId||'')===String(task.no)||(!r.taskId&&r.task===task.name));
+  });
+}
 function latestNext(name){
   var best=null;
   D.records.forEach(function(r){
@@ -302,7 +307,7 @@ function call(fn,args,btn,okMsg){
  }catch(e){toast(e.message,true);return}
  busy=true;
  var label=btn?btn.textContent:'';
- if(btn){btn.disabled=true;btn.textContent='저장 중…'}
+ if(btn){btn.disabled=true;btn.textContent=fn==='deleteTask'?'삭제 중…':'저장 중…'}
  api(fn,args).then(function(data){
   setData(data);if(done)done();render();if(okText)toast(okText);
  }).catch(function(e){
@@ -644,11 +649,17 @@ function renderTeam(){
       '<label class="lab">담당자</label><div class="stack-mobile">'+D.names.map(function(n){return '<label><input type="checkbox" name="owner" value="'+esc(n)+'"'+(ownersOf(v).includes(n)?' checked':'')+'> '+esc(n)+'</label>'}).join('')+'</div>'+
       '<div class="row2"><div><label class="lab">마감일</label><input class="field" type="date" name="due" value="'+esc(v.due)+'"></div><div><label class="lab">분류</label><select class="field" name="cat"><option value="">선택 안 함</option>'+D.cats.map(function(c){return '<option'+(c===v.cat?' selected':'')+'>'+esc(c)+'</option>'}).join('')+'</select></div></div>'+
       '<label class="lab">이슈·비고</label><textarea class="field" name="issue">'+esc(v.issue)+'</textarea><label class="lab">관련 링크</label><textarea class="field" name="link">'+esc(v.link)+'</textarea>';
-    var actions='<div class="editor-actions task-edit-actions"><button class="btn" type="button" data-cancel>취소</button><button class="btn primary" type="submit">저장</button></div>';
+    var actions='<div class="editor-actions task-edit-actions">'+(x?'<button class="btn" type="button" data-delete>삭제</button>':'')+'<button class="btn" type="button" data-cancel>취소</button><button class="btn primary" type="submit">저장</button></div>';
     f.innerHTML='<form class="inline-editor task-form"><div class="editor-top"><h3>'+(x?'업무 수정':'업무 추가')+'</h3>'+actions+'</div>'+
       '<label class="lab">업무명</label><input class="field" name="name" required value="'+esc(v.name)+'">'+
       '<div class="task-edit-grid">'+recordFields+'<fieldset><legend>업무 정보</legend>'+taskFields+'</fieldset></div></form>';
     var form=f.querySelector('form');form.querySelector('[data-cancel]').onclick=close;
+    if(x)form.querySelector('[data-delete]').onclick=function(){
+      var waiting=openRequestsOf(x).length;
+      if(waiting){toast('처리 안 된 확인 요청이 '+waiting+'건 있어 삭제할 수 없어요.',true);return}
+      if(!confirm('‘'+x.name+'’ 업무를 삭제할까요?'))return;
+      call('deleteTask',[x.no,{name:x.name,cat:x.cat,owner:x.owner,status:x.status,due:x.due,issue:x.issue,link:x.link},me],this,'업무를 삭제했어요');
+    };
     form.onsubmit=function(e){
       e.preventDefault();
       var get=function(n){return form.elements.namedItem(n).value};

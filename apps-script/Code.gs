@@ -2,8 +2,8 @@
 // 스크립트 속성: SHEET_ID(시트 ID)
 
 const TZ = 'Asia/Seoul';
-const SH = { tasks: '업무리스트', records: '업무기록', requests: '확인요청', news: '파트 소식', plans: '개선과제', lists: '목록' };
-const COLS = { tasks: 9, records: 9, requests: 11, news: 5, plans: 6 };
+const SH = { tasks: '업무리스트', records: '업무기록', requests: '확인요청', news: '파트 소식', plans: '개선과제', lists: '목록', trash: '삭제한 업무' };
+const COLS = { tasks: 9, records: 9, requests: 11, news: 5, plans: 6, trash: 11 };
 const STATUSES = ['진행중', '대기', '보류', '완료'];
 
 function doGet() {
@@ -11,7 +11,7 @@ function doGet() {
 }
 
 function doPost(e) {
-  const api = { getData: getData, addTask: addTask, editTask: editTask, addRecord: addRecord, updateRequest: updateRequest, addNews: addNews };
+  const api = { getData: getData, addTask: addTask, editTask: editTask, deleteTask: deleteTask, addRecord: addRecord, updateRequest: updateRequest, addNews: addNews };
   let out;
   try {
     const body = JSON.parse(e.postData.contents);
@@ -179,7 +179,7 @@ function saveTask_(p, editing) {
     tasks.forEach(function (t) { old[t.no] = t.priority; });
     const peers = tasks.filter(function (t) { return t !== existing && (t.status === '완료') === completed; }).sort(byRank_);
     const oldName = existing ? existing.name : '';
-    const task = existing || { no: String(tasks.reduce(function (m, t) { return Math.max(m, Number(t.no) || 0); }, 0) + 1), r: 0 };
+    const task = existing || { no: String(nextTaskId_()), r: 0 };
     task.priority = newlyCompleted ? 1000000 : rank;
     task.name = name;
     task.cat = text_(p.cat);
@@ -207,6 +207,48 @@ function saveTask_(p, editing) {
     });
     if (existing && oldName !== name) renameTask_(task.no, oldName, name);
     if (hasRecord) putRecord_(task, rec.date, author, rec.done, rec.next);
+    return getData();
+  });
+}
+// 지운 업무의 번호를 다시 쓰면 지난 기록이 새 업무에 붙으므로 지운 업무·기록의 번호까지 본다
+function nextTaskId_() {
+  const trash = ss_().getSheetByName(SH.trash) ? rows_('trash') : [];
+  const ids = rows_('tasks').concat(trash).map(function (x) { return x.v[0]; })
+    .concat(rows_('records').concat(rows_('requests')).map(function (x) { return x.v[1]; }));
+  return ids.reduce(function (m, v) { return Math.max(m, Number(v) || 0); }, 0) + 1;
+}
+// 업무 삭제: 행을 '삭제한 업무' 탭으로 옮긴다
+function deleteTask(id, base, me) {
+  return withLock_(function () {
+    const by = member_(me);
+    const tasks = readTasks_();
+    const task = tasks.filter(function (t) { return t.no === String(id); })[0];
+    if (!task) throw new Error('업무를 찾지 못했어요. 새로고침해 주세요.');
+    if (!base || ['name', 'cat', 'owner', 'status', 'due', 'issue', 'link'].some(function (k) { return str_(base[k]) !== task[k]; })) {
+      throw new Error('다른 사람이 먼저 수정한 업무예요. 새로고침 후 다시 확인해 주세요.');
+    }
+    const open = rows_('requests').filter(function (x) {
+      const taskId = str_(x.v[1]);
+      return str_(x.v[6]) && str_(x.v[7]) !== '완료' && (taskId === task.no || (!taskId && str_(x.v[2]) === task.name));
+    });
+    if (open.length) throw new Error('처리 안 된 확인 요청이 ' + open.length + '건 있어 삭제할 수 없어요.');
+
+    const sh = sheet_(SH.tasks);
+    if (!ss_().getSheetByName(SH.trash)) {
+      const created = ss_().insertSheet(SH.trash, ss_().getNumSheets());
+      created.getRange(1, 1, 1, COLS.trash).setValues([sh.getRange(1, 1, 1, 9).getValues()[0].concat(['삭제 일시', '삭제한 사람'])]);
+      created.setFrozenRows(1);
+    }
+    append_('trash', [id_(task.no), task.priority, task.name, task.cat, task.owner, task.status, task.due ? date_(task.due) : '',
+      text_(task.issue), text_(task.link), now_(), by], [3, 8, 9, 10, 11], [7]);
+    SpreadsheetApp.flush();
+    sh.deleteRow(task.r);
+
+    readTasks_().sort(function (a, b) {
+      return (a.status === '완료' ? 1 : 0) - (b.status === '완료' ? 1 : 0) || byRank_(a, b);
+    }).forEach(function (t, i) {
+      if (t.priority !== i + 1) sh.getRange(t.r, 2).setValue(i + 1);
+    });
     return getData();
   });
 }
